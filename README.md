@@ -3,6 +3,8 @@
 
 Airflow 3.x versions would be suported via [amazon-mwaa-docker-images](https://github.com/aws/amazon-mwaa-docker-images) repo.
 
+**Current version: Apache Airflow 2.11.1** | Python 3.11 | Amazon Provider 9.22.0
+
 # About aws-mwaa-local-runner
 
 This repository provides a command line interface (CLI) utility that replicates an Amazon Managed Workflows for Apache Airflow (MWAA) environment locally.
