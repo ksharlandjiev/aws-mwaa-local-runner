@@ -13,8 +13,8 @@ echo 'airflow ALL=(ALL)NOPASSWD:ALL' | sudo EDITOR='tee -a' visudo
 
 dnf erase openssl-devel -y
 dnf install openssl openssl-devel libffi-devel sqlite-devel bzip2-devel wget tar xz -y
-# Install python optional standard libary module dependencies 
-dnf install ncurses-devel gdbm-devel readline-devel xz-libs xz-devel uuid-devel libuuid-devel -y 
+# Install python optional standard libary module dependencies
+dnf install ncurses-devel gdbm-devel readline-devel xz-libs xz-devel uuid-devel libuuid-devel -y
 dnf install glibc -y
 
 # install system dependency to enable the installation of most Airflow extras
@@ -34,21 +34,18 @@ tar -xf ./python_install/$python_tar -C ./python_install
 dnf install -y dnf-plugins-core
 dnf builddep -y python3
 
-
-pushd /python_install/$python_file 
-./configure 
+pushd /python_install/$python_file
+./configure
 make install -j $(nproc) # use -j to set the cores for the build
 popd
 
-# Upgrade pip
-pip3 install $PIP_OPTION --upgrade 'pip<23'
+# Upgrade pip — modern pip is required for correct dependency resolution
+pip3 install --upgrade pip
 
 # openjdk is required for JDBC to work with Airflow
 dnf install -y java-17-amazon-corretto
 
 # Installing mariadb-devel dependency for apache-airflow-providers-mysql.
-# The mariadb-devel provided by AL2 conflicts with openssl11 which is required Python 3.10
-# so a newer version of the dependency must be installed from source.
 sudo mkdir mariadb_rpm
 sudo chown airflow /mariadb_rpm
 
@@ -65,32 +62,58 @@ fi
 # install mariadb_devel and its dependencies
 sudo rpm -ivh /mariadb_rpm/*
 
-sudo -u airflow pip3 install $PIP_OPTION --no-use-pep517 --constraint /constraints.txt poetry
-sudo -u airflow pip3 install $PIP_OPTION --constraint /constraints.txt cached-property
-sudo -u airflow pip3 install $PIP_OPTION --constraint /constraints.txt wheel 
-sudo -u airflow pip3 install $PIP_OPTION --constraint /constraints.txt --use-deprecated legacy-resolver apache-airflow[celery,statsd"${AIRFLOW_DEPS:+,}${AIRFLOW_DEPS}"]=="${AIRFLOW_VERSION}"
+# Install system libraries needed for Python packages with native extensions
+dnf install -y libxml2-devel libxslt-devel libcurl-devel postgresql-devel unixODBC-devel
 
-dnf install -y libxml2-devel libxslt-devel
+# ============================================================================
+# Python package installation
+#
+# All pip installs use --constraint to prevent dependency version conflicts.
+# The constraints file pins every transitive dependency to a known-good version
+# that is compatible with this Airflow release.
+# ============================================================================
+
+CONSTRAINT_FILE="/constraints.txt"
+
+sudo -u airflow pip3 install $PIP_OPTION --constraint $CONSTRAINT_FILE wheel
+sudo -u airflow pip3 install $PIP_OPTION --constraint $CONSTRAINT_FILE \
+    apache-airflow[celery,statsd"${AIRFLOW_DEPS:+,}${AIRFLOW_DEPS}"]=="${AIRFLOW_VERSION}"
+
 # install celery[sqs] and its dependencies
-dnf install -y libcurl-devel 
-# see https://stackoverflow.com/questions/49200056/pycurl-import-error-ssl-backend-mismatch
 export PYCURL_SSL_LIBRARY=openssl11
-sudo -u airflow pip3 install $PIP_OPTION --compile pycurl
-sudo -u airflow pip3 install $PIP_OPTION celery[sqs]
+sudo -u airflow pip3 install $PIP_OPTION --constraint $CONSTRAINT_FILE --compile pycurl
+sudo -u airflow pip3 install $PIP_OPTION --constraint $CONSTRAINT_FILE celery[sqs]
 
-# install postgres Python driver and its dependencies
-dnf install -y postgresql-devel
-sudo -u airflow pip3 install $PIP_OPTION psycopg2
-
-# install unixODBC-devel to support pyodbc
-dnf install -y unixODBC-devel
+# install postgres Python driver
+sudo -u airflow pip3 install $PIP_OPTION --constraint $CONSTRAINT_FILE psycopg2
 
 # install additional python dependencies
-if [ -n "${PYTHON_DEPS}" ]; then sudo -u airflow pip3 install $PIP_OPTION "${PYTHON_DEPS}"; fi
+if [ -n "${PYTHON_DEPS}" ]; then
+    sudo -u airflow pip3 install $PIP_OPTION --constraint $CONSTRAINT_FILE "${PYTHON_DEPS}"
+fi
 
+# install MWAA base providers
 MWAA_BASE_PROVIDERS_FILE=/mwaa-base-providers-requirements.txt
 echo "Installing providers supported for airflow version ${AIRFLOW_VERSION}"
-sudo -u airflow pip3 install --constraint /constraints.txt $PIP_OPTION -r $MWAA_BASE_PROVIDERS_FILE
+sudo -u airflow pip3 install $PIP_OPTION --constraint $CONSTRAINT_FILE -r $MWAA_BASE_PROVIDERS_FILE
+
+# ============================================================================
+# Verify critical dependency versions are correct.
+# pydantic_core requires typing_extensions>=4.14.1 for the Sentinel class.
+# If an unconstrained transitive install somehow downgraded it, fix it now.
+# ============================================================================
+INSTALLED_TE_VERSION=$(sudo -u airflow pip3 show typing_extensions 2>/dev/null | grep '^Version:' | awk '{print $2}')
+echo "typing_extensions version after install: ${INSTALLED_TE_VERSION}"
+
+# Compare versions — we need at least 4.14.1
+REQUIRED_TE_VERSION="4.14.1"
+if [ "$(printf '%s\n' "$REQUIRED_TE_VERSION" "$INSTALLED_TE_VERSION" | sort -V | head -n1)" != "$REQUIRED_TE_VERSION" ]; then
+    echo "ERROR: typing_extensions ${INSTALLED_TE_VERSION} is too old (need >= ${REQUIRED_TE_VERSION}). Upgrading..."
+    sudo -u airflow pip3 install $PIP_OPTION "typing_extensions>=4.14.1"
+fi
+
+# Smoke test: verify pydantic can actually import (catches typing_extensions issues)
+sudo -u airflow python3 -c "from pydantic import BaseModel; print('pydantic import OK')"
 
 # jq is used to parse json
 dnf install -y jq

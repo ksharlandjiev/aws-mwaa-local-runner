@@ -9,8 +9,8 @@ LABEL maintainer="amazon"
 # Airflow
 ## Version specific ARGs
 ARG AIRFLOW_VERSION=2.11.1
-ARG WATCHTOWER_VERSION=3.3.1
-ARG PROVIDER_AMAZON_VERSION=9.22.0
+ARG WATCHTOWER_VERSION=3.4.0
+ARG PROVIDER_AMAZON_VERSION=9.21.0
 
 ## General ARGs
 ARG AIRFLOW_USER_HOME=/usr/local/airflow
@@ -20,7 +20,7 @@ ARG SYSTEM_DEPS=""
 ARG INDEX_URL=""
 ENV AIRFLOW_HOME=${AIRFLOW_USER_HOME}
 ENV PATH="/usr/local/airflow/.local/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/airflow/.local/lib/python3.11/site-packages:/usr/local/airflow/.local/bin:/usr/local/airflow/.local/lib/python3.11/site-packages:/usr/local/airflow/.local/bin:/usr/local/airflow/.local/lib/python3.11/site-packages"
-ENV PYTHON_VERSION=3.11.7
+ENV PYTHON_VERSION=3.11.11
 
 COPY script/bootstrap.sh /bootstrap.sh
 COPY script/systemlibs.sh /systemlibs.sh
@@ -28,8 +28,12 @@ COPY script/generate_key.sh /generate_key.sh
 COPY script/run-startup.sh /run-startup.sh
 COPY script/shell-launch-script.sh /shell-launch-script.sh
 COPY script/verification.sh /verification.sh
-COPY config/constraints.txt /constraints.txt
 COPY config/mwaa-base-providers-requirements.txt /mwaa-base-providers-requirements.txt
+
+# Fetch the official constraints file for this Airflow version from the Apache repo.
+# This ensures all transitive dependencies are pinned to versions tested with this release.
+ADD https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-3.11.txt /constraints.txt
+RUN chmod a+r /constraints.txt
 
 RUN chmod u+x /systemlibs.sh && /systemlibs.sh
 RUN chmod u+x /bootstrap.sh && /bootstrap.sh
